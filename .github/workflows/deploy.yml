@@ -1,0 +1,64 @@
+name: Docker CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-northeast-1
+  ECR_REPOSITORY: dem-dev
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate required files
+        run: |
+          test -f Dockerfile
+          test -f index.html
+          test -f Deployment.yaml
+          test -f service.yaml
+
+      - name: Build Docker image
+        run: docker build -t dem-dev:${{ github.sha }} .
+
+      - name: Smoke test container
+        run: |
+          docker run -d --name dem-dev-test -p 8080:80 dem-dev:${{ github.sha }}
+          sleep 5
+          curl --fail http://localhost:8080
+          docker stop dem-dev-test
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Tag and push Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker tag dem-dev:${IMAGE_TAG} ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
+          docker tag dem-dev:${IMAGE_TAG} ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest
+          docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
+          docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest
+
+      - name: Show Kubernetes deployment command
+        run: |
+          echo "Image pushed successfully."
+          echo "Deploy locally with:"
+          echo "kubectl set image deployment/dem-dev dem-dev=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}"
+          echo "kubectl rollout status deployment/dem-dev"

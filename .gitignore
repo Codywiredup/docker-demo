@@ -4,4 +4,3 @@
 *.tfstate.*
 .terraform/
 crash.log
-"@ | Set-Content .gitignore
